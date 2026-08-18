@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Cesium线条稳定贴地最佳实践</title>
+<link href="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+<style>
+html,body,#cesiumContainer{width:100%;height:100%;margin:0;padding:0;overflow:hidden;}
+</style>
+</head>
+<body>
+<div id="cesiumContainer"></div>
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Cesium.js"></script>
+<script src="config.js"></script>
+<script>
+if (window.location.protocol === 'file:') {
+  document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#c00;text-align:center;"><div><h2>请使用http服务打开</h2><code>python -m http.server 8081</code></div></div>`;
+  throw new Error('必须HTTP协议');
+}
+
+(async ()=>{
+  if(CONFIG.cesiumIonToken) Cesium.Ion.defaultAccessToken = CONFIG.cesiumIonToken;
+
+  const data = {
+    mapCenter:[103.701323,27.308161],
+    initFire:[103.698,27.315],
+    fireStation:[103.693216,27.297315],
+    defensePoints:[
+      [103.704,27.315],
+      [103.698,27.320],
+      [103.692,27.315],
+      [103.698,27.310]
+    ]
+  };
+
+  const viewer = new Cesium.Viewer('cesiumContainer',{
+    baseLayerPicker:false,geocoder:false,animation:false,timeline:false,navigationHelpButton:false
+  });
+
+  let terrain = new Cesium.EllipsoidTerrainProvider();
+  if(CONFIG.cesiumIonToken){
+    try{
+      terrain = await Cesium.createWorldTerrainAsync();
+    }catch(e){console.warn("地形加载失败",e);}
+  }
+  viewer.terrainProvider = terrain;
+
+  //生成六边形环
+  function buildHexFromDefensePoints(pts, offsetDeg = 0.0045){
+    let sumLng=0,sumLat=0;
+    pts.forEach(([lng,lat])=>{sumLng+=lng;sumLat+=lat;});
+    const cx = sumLng / pts.length;
+    const cy = sumLat / pts.length;
+    const hexRing = [];
+    for(let i=0;i<6;i++){
+      const ang = Math.PI * 2 * (i / 6);
+      hexRing.push([cx + Math.cos(ang)*offsetDeg, cy + Math.sin(ang)*offsetDeg]);
+    }
+    hexRing.push(hexRing[0]);
+    return hexRing;
+  }
+
+  //相机定位
+  viewer.camera.flyTo({
+    destination:Cesium.Cartesian3.fromDegrees(data.mapCenter[0],data.mapCenter[1],2200),
+    orientation:{pitch:Cesium.Math.toRadians(-35)}
+  });
+
+  function addMarker(lng,lat,name,color){
+    viewer.entities.add({
+      name,
+      position:Cesium.Cartesian3.fromDegrees(lng,lat),
+      point:{pixelSize:14,color,outlineColor:Cesium.Color.WHITE,outlineWidth:2,heightReference:Cesium.HeightReference.CLAMP_TO_GROUND},
+      label:{text:name,font:'14px sans-serif',fillColor:Cesium.Color.WHITE,outlineColor:Cesium.Color.BLACK,outlineWidth:2,pixelOffset:new Cesium.Cartesian2(0,-22),heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,disableDepthTestDistance:Number.POSITIVE_INFINITY}
+    })
+  }
+  addMarker(data.initFire[0], data.initFire[1], "初始火点", Cesium.Color.RED);
+  addMarker(data.fireStation[0], data.fireStation[1], "消防站", Cesium.Color.GREEN);
+  data.defensePoints.forEach(([lng,lat],idx)=>addMarker(lng,lat,"防守点"+(idx+1),Cesium.Color.fromCssColorString("#22aa44")));
+
+
+  // ========= 重点：全部使用 clampToGround:true，不需要高程采样 =========
+  // 消防站 -> 火点进攻路线
+  viewer.entities.add({
+    name:"进攻路线",
+    polyline:{
+      positions:Cesium.Cartesian3.fromDegreesArray([
+        data.fireStation[0], data.fireStation[1],
+        data.initFire[0], data.initFire[1]
+      ]),
+      width:6,
+      clampToGround:true,
+      material:Cesium.Color.fromCssColorString("#2b6cff")
+    }
+  });
+
+  //六边形橙色虚线隔离带
+  const hex = buildHexFromDefensePoints(data.defensePoints,0.0045);
+  const hexFlat = hex.flat();
+  viewer.entities.add({
+    name:"六边形隔离带",
+    polyline:{
+      positions:Cesium.Cartesian3.fromDegreesArray(hexFlat),
+      width:5,
+      clampToGround:true,
+      material:new Cesium.PolylineDashMaterialProperty({
+        color:Cesium.Color.fromCssColorString("#ff8c00"),
+        dashPattern:12
+      })
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
